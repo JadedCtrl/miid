@@ -1,0 +1,826 @@
+#!/bin/sh
+#―――――――――――――――――――――――――――――――――――――――
+# name: miid, Mushy II Demon
+# main: jadedctrl<@teknik.io>
+# date: 2021
+#―――――――――――――――――――――――――――――――――――――――
+
+# ――――――――――――――――――――――――――――――――――――――
+# MUSHY NONSENSE
+# ――――――――――――――――――――――――――――――――――――――
+function object_title {
+	local path="$1"
+	head -1 "${path}/name"
+}
+
+function object_description {
+	local path="$1"
+	cat "${path}/description"
+}
+
+function object_owner {
+	local path="$1"
+	cat "${path}/owner"
+}
+
+# Return whether or not object is owned by user
+function object_owned {
+	local object="$1"
+	local user="$2"
+	local owner="$(object_owner "$object")"
+	if test -z "$owner"; then
+		return 0
+	elif echo "$owner" | grep "^${user}$" >/dev/null; then
+		return 0
+	else
+		return 1
+	fi
+}
+
+# get an object by name (in room, or inventory)
+function get_object {
+	local user="$1"
+	local name="$2"
+	if echo "$name" | grep -e "^the " -e "^a " >/dev/null; then
+		name="$(chop_first "$name")"
+	fi
+
+	get_object_inventory "$user" "$name"
+	if test "$?" -eq 3; then
+		return;
+	fi
+
+	for item in "$IRC_DIR"/items/*; do
+		if grep -i "^$name" "${item}/name" >/dev/null; then
+			echo "${item}"
+			return
+		fi
+	done
+}
+
+function get_object_inventory {
+	local user="$1"
+	local name="$2"
+	local user_dir="${IRC_DIR}/users/${user}/"
+	for item in "$user_dir"/items/*; do
+		if grep -i "^$name" "${item}/name" >/dev/null; then
+			echo "${item}"
+			return 3
+		fi
+	done
+}
+
+
+# ――――――――――――――――――――――――――――――――――――――
+# IRC
+# ――――――――――――――――――――――――――――――――――――――
+function pm {
+	local user="$1"
+	local message="$2"
+
+	echo "$message" \
+	| sed 's%^%/NOTICE '"$user"' :%g'  \
+	> "${IRC_DIR}/in"
+}
+
+function privmsg {
+	local user="$1"
+	local message="$2"
+
+	echo "$message" \
+	| sed 's%^%/PRIVMSG '"$user"' :%g'  \
+	> "${IRC_DIR}/in"
+}
+
+function msg {
+	local message="$1"
+	echo "$message" \
+	> "${IRC_DIR}/in"
+}
+
+function send_description {
+	local user="$1"
+	local obj_path="$2"
+	pm "$user" "$(object_description "$obj_path")"
+}
+
+
+# ――――――――――――――――――――――――――――――――――――――
+# COMMANDS
+# ――――――――――――――――――――――――――――――――――――――
+# Print a description of object, user,  or room
+function examine_command {
+	local user="$1"
+	local args="$2"
+
+	# if examining the room
+	if test -z "$args"; then
+		send_description "$user" "$IRC_DIR"
+		rummage_command "$user" "around"
+	elif echo "$args" | grep "^at">/dev/null; then
+		examine_command "$user" "$(chop_first "$args")"
+	elif echo "around here" | grep "$args">/dev/null; then
+		send_description "$user" "$IRC_DIR"
+		rummage_command "$user" "around"
+	elif test "the room"  = "$args"; then
+		send_description "$user" "$IRC_DIR"
+		rummage_command "$user" "around"
+	else
+		examine_object "$user" "$args"
+	fi
+}
+
+function examine_object {
+	local user="$1"
+	local name="$2"
+	local object="$(get_object "$user" "$name")"
+
+	if test -z "$object"; then
+		msg "There's nothing to look at, but $user sure is trying."
+	else
+		send_description "$user" "$object"
+	fi
+}
+
+function reads_command {
+	local user="$1"
+	local args="$2"
+	local preposition="$(first "$args")"
+
+	# "reads on"
+	if test "$preposition" = "on"; then
+		reads_on "$user" "$(get_object "$user" "$(chop_first "$args")")"
+		return
+	elif test "$preposition" = "in"; then
+		reads_in "$user" "$(get_object "$user" "$(chop_first "$args")")"
+		return
+	fi
+
+	local object="$(get_object "$user" "$args")"
+	if test -z "$object"; then
+		msg "$user squints $(their "$user") eyes, but can't see anything."
+	else
+		local openfile="${object}/open"
+		if is_hinged "$object"; then
+			if is_open "$object"; then	
+				reads_in "$user" "$object"
+			else
+				reads_on "$user" "$object"
+			fi
+		fi
+	fi
+}
+
+function inscription {
+	local object="$1"
+	if test -f "${object}/inscription"; then
+		cat "${object}/inscription"
+	fi
+}
+
+function exscription {
+	local object="$1"
+	if test -f "${object}/exscription"; then
+		cat "${object}/exscription"
+	fi
+}
+
+function hinges_command {
+echo "HINGING"
+	local user="$1"
+	local args="$2"
+	local object="$(get_object "$user" "$args")"
+	if test -z "$object"; then
+		msg "$user tries to make openable… something that doesn't exist."
+	else
+		echo "closed" \
+		> "${object}/open"
+		pm "$user" "Alright, now it's openable. Cool."
+	fi
+}
+
+function opens_command {
+	local user="$1"
+	local args="$2"
+	local object="$(get_object "$user" "$args")"
+	if test -z "$object"; then
+		msg "$user flails their opens in vain."
+	elif is_hinged "$object"; then
+		if is_open "$object"; then
+			pm "$user" "It's… it's already open."
+		else
+			echo "open" \
+			> "${object}/open"
+		fi
+	else
+		msg "$user tries to pry something open, to no avail."
+	fi
+}
+
+function closes_command {
+	local user="$1"
+	local args="$2"
+	local object="$(get_object "$user" "$args")"
+	if test -z "$object"; then
+		msg "$user flails their opens in vain."
+	elif is_hinged "$object"; then
+		if is_open "$object"; then
+			echo "close" \
+			> "${object}/open"
+		else
+			pm "$user" "Err… it's closed already. Are you OK?"
+		fi
+	else
+		msg "$user tries to cram something shut, but just hurts $(their "$user") fingers."
+	fi
+}
+
+function is_hinged {
+	local object="$1"
+	test -f "${object}/open"
+	return "$?"
+}
+
+function is_open {
+	local object="$1"
+	local openfile="${object}/open"
+	if test -f "$openfile" -a "$(cat "$openfile")" = "open"; then
+		return 0
+	fi
+	return 2;
+}
+
+function reads_in {
+	local user="$1"
+	local object="$2"
+
+	if is_open "$object"; then
+		local intext="$(inscription "$object")"
+		if test -z "$intext"; then
+			pm "$user" "Hm, it doesn't look like anything's written in it."
+		else
+			pm "$user" "$intext"
+		fi
+	else
+		pm "$user" "You have to open it first, dude…"
+	fi
+}	
+
+function reads_on {
+	local user="$1"
+	local object="$2"
+	local outtext="$(exscription "$object")"
+	if test -z "$outtext"; then
+		pm "$user" "It doesn't look like anything's written on it."
+	else
+		pm "$user" "$outtext"
+	fi
+}
+
+function writes_command {
+	local user="$1"
+	local args="$2"
+	local preposition="$(first "$args")"
+	echo "WE WRITEEEEE"
+
+	# "reads on"
+	if test "$preposition" = "on"; then
+		writes_on "$user" "$(chop_first "$args")"
+		return
+	elif test "$preposition" = "in"; then
+		writes_in "$user" "$(chop_first "$args")"
+		return
+	fi
+
+	local object="$(get_object "$user" "$args")"
+	if test -z "$object"; then
+		msg "$user grips $(their "$user") pen and furiously writes air-letters."
+	else
+		local openfile="${object}/open"
+		if test -f "${object}/open"; then
+			if test "$(cat "$openfile")" = "open"; then
+				writes_in "$user" "$args"
+			else
+				writes_on "$user" "$args"
+			fi
+		fi
+	fi
+}
+
+function writes_in {
+	local user="$1"
+	local args="$2"
+	echo "$args ...vs... $(first "$args" ', ')"
+	local object="$(get_object "$user" "$(first "$args" ', ')")"
+	local text="$(chop_first "$args" ', ')"
+
+	if test -z "$object"; then
+		msg "$user grips $(their "$user") pen and frenetically writes air-letters."
+	elif is_open "$object"; then
+		printf "$text" \
+		> "${object}/inscription"
+		pm "$user" "You've written in it. What a scribe you are!"
+	else
+		pm "$user" "You can't write _in_ something if it's not open…"
+	fi
+}
+
+function writes_on {
+	echo " WRITEEEEE ON"
+	local user="$1"
+	local args="$2"
+	local object="$(get_object "$user" "$(first "$args" ', ')")"
+	local text="$(chop_first "$args" ', ')"
+
+	if test -z "$object"; then
+		msg "$user grips $(their "$user") pen and frenetically writes air-letters."
+	elif is_open "$object"; then
+		pm "$user" "You can't write on something if it's open…"
+	else
+		pritnf "$text" \
+		> "${object}/exscription"
+		pm "$user" "You've written in it. What a scribe you are!"
+	fi
+}
+
+# Take an object, put it in user's inventory
+function take_command {
+	local user="$1"
+	local args="$2"
+	local object="$(get_object "$user" "$name")"
+	local objectname="$(object_title "$object")"
+	local userdir="${IRC_DIR}/users/${user}/items"
+
+	if test -z "$object"; then
+		msg "$user suddenly throws $(their "$user") arms forward, for some reason."
+	else
+		graveyard_store "$object"
+		mv "$object" "${userdir}/"
+		pm "$user" "You hurriedly put the ${objectname} into your pocket."
+	fi
+}
+
+# Move an object from inventory into the room
+function drop_command {
+	local user="$1"
+	local args="$2"
+	local object="$(get_object_inventory "$user" "$name")"
+	local objectname="$(object_title "$object")"
+
+	if test -z "$object"; then
+		msg "${user} rummages through $(their) pockets. $(They "$user") looks silly."
+	else
+		graveyard_store "$object"
+		mv "$object" "${IRC_DIR}/items/"
+		pm "$user" "You put down a $objectname from your pocket."
+	fi
+}
+
+# Prints every item in the user's inventory.
+function rummage_command {
+	local user="$1"
+	local args="$2"
+	local topdir="${IRC_DIR}/users/$user"
+	local message="In your sack, you find:"
+
+	if test "$args" = "around"; then
+		topdir="${IRC_DIR}"
+		message="Here you can see:"
+	fi
+
+	local item_list=""
+	for item in "$topdir"/items/*; do
+		if echo "$item" | grep '\*'; then
+			echo "Not item."
+		elif test -z "$item_list"; then
+			item_list="A $(object_title "$item")"
+		else
+			item_list="$item_list, a $(object_title "$item")"
+		fi
+	done
+	if test -z "$item_list"; then
+		pm "$user" "You can't see anything."
+	else
+		pm "$user" "${message} ${item_list}."
+	fi
+}
+
+
+# ――――――――――――――――――――――――――――――――――――――
+# BUILD COMMANDS
+# ――――――――――――――――――――――――――――――――――――――
+function creates_command {
+	local user="$1"
+	local args="$2"
+	local name="$args"
+	if echo "$name" | grep "^a " >/dev/null; then
+		name="$(chop_first "$name")"
+	fi
+	local filename="$(first "$name")-$(date +%m%d%H%M)"
+	local itemdir="${IRC_DIR}/users/${user}/items/${filename}"
+
+	mkdir -p "$itemdir"
+	echo ""\
+	> "${itemdir}/description"
+	echo "${name}" \
+	> "${itemdir}/name"
+	echo "${user}" \
+	> "${itemdir}/owner"
+
+	pm "$user" "You magick a $name into existence, and cram it into your favourite pocket."
+}
+
+function aliases_command {
+	local user="$1"
+	local args="$2"
+	local objectquery="$(first "$args" ' as ')"
+	local object="$(get_object "$user" "$objectquery")"
+	local objectname="$(object_title "$object")"
+	local objectowner="$(object_owner "$object")"
+
+	if test -z "$object"; then
+		msg "${user} mumbles under $(their "$user") breath about something or another."
+	elif object_owned "$object" "$user"; then
+		echo "$(chop_first "$args" ' as ')" \
+		>> "${object}/name"
+		pm "$user" "You've given the $objectname a new name, $args."
+	else
+		msg "${user} tries in vain to give a name to the $objectname of $objectowner."
+	fi
+}
+
+function renames_command {
+	local user="$1"
+	local args="$2"
+	local objectquery="$(first "$args" ' as ')"
+	local object="$(get_object "$user" "$objectquery")"
+	local objectname="$(object_title "$object")"
+	local objectowner="$(object_owner "$object")"
+
+	if test -z "$object"; then
+		msg "${user} looks around, making vague noises of confusion."
+	elif object_owned "$object" "$user"; then
+		echo "$(chop_first "$args" ' as ')" \
+		> "${object}/name"
+		pm "$user" "You hath stoleth and regiven to $objectname."
+	else
+		msg "${user} tries in vain to steal name from the $objectname of $objectowner."
+	fi
+}
+
+function describes_command {
+	local user="$1"
+	local args="$2"
+	local objectquery="$(first "$args" ' as ')"
+	if test "$objectquery" = "here" -o "$objectquery" = "this room"; then
+		describes_room "$user" "$args" 
+		return
+	fi
+
+	# else, it's an object.
+	local object="$(get_object "$user" "$objectquery")"
+	local objectname="$(object_title "$object")"
+	local objectowner="$(object_owner "$object")"
+
+	if test -z "$object"; then
+		msg "${user} looks around, making vague noises of confusion."
+	elif object_owned "$object" "$user"; then
+		printf "$(chop_first "$args" ' as ')" \
+		> "${object}/description"
+		pm "$user" "Your pen has changed the appearance of $objectname."
+	else
+		msg "${user} reallyy wants to use their new pen, but $objectowner won't allow it."
+	fi
+}
+
+function describes_room {
+	local user="$1"
+	local args="$2"
+	local desc="$(chop_first "$args" ' as ')"
+
+	if test -n "$desc"; then
+		printf "$desc" \
+		> "${IRC_DIR}/description"
+		pm "$user" "Your pen has changed the appearance of the room."
+	else
+		msg "${user} reallyy wants to use their new pen, but they've nothing to say."
+	fi
+}
+
+function permits_command {
+	local user="$1"
+	local args="$2"
+	local new_owner="$(first "$args")"
+	local object="$(get_object "$user" "$(chop_first "$args" ' with ')")"
+	local objectname="$(object_title "$object")"
+	local objectowner="$(object_owner "$object")"
+
+	if test -z "$object"; then
+		msg "${user} raises their hand authoritatively, but has nothing to say."
+	elif object_owned "$object" "$user"; then
+		if test -z "$objectowner"; then
+			pm "$user" "This is already communal property, you reactionary."
+			return
+		fi
+
+		echo "$new_owner" \
+		>> "${object}/owner"
+		pm "$user" "You've allowed $new_owner to much around with it."
+		pm "$new_owner" "$user has kindly allowed you to heck around with the $objectname."
+	else
+		msg "${user} is eager to give away what isn't owned by $(them "$user")."
+	fi
+}
+
+function gifts_command {
+	local user="$1"
+	local args="$2"
+	local new_owner="$(chop_first "$args" ' to ')"
+	local object="$(get_object "$user" "$(first "$args" ' to ')")"
+	local objectname="$(object_title "$object")"
+	local objectowner="$(object_owner "$object")"
+
+	if test -z "$object"; then
+		msg "${user} warmly extends $(their "$user") hands… but they're empty."
+	elif object_owned "$object" "$user"; then
+		if test -z "$objectowner"; then
+			pm "$user" "This is already communal property, you reactionary."
+		elif test "$(wc -l "${object}/owner" | awk '{print $1}')" -gt 1; then
+			pm "$user" "You can't gift something also owned by others."
+		else
+			echo "$new_owner" \
+			> "${object}/owner"
+
+			pm "$user" "You've given it to $new_owner, hurrah! Sharing."
+			pm "$new_owner" "The ${objectname} is now in your inventory."
+			ensure_user "$new_owner"
+			mv "${object}" "${IRC_DIR}/users/${new_owner}/items/"
+		fi
+	else
+		msg "${user} is a fan of regifting, but $objectowner isn't hearing it."
+	fi
+}
+
+
+# ――――――――――――――――――――――――――――――――――――――
+# BOT COMMANDS
+# ――――――――――――――――――――――――――――――――――――――
+function help_command {
+	local user="$1"
+	local args="$2"
+	msg "$user: Fine, I'll PM you my helpdoc."
+	if test -f helpdoc; then
+		privmsg "$user" "$(cat helpdoc)"
+	else
+		privmsg "$user" "Uhhh… there's no helpdoc? My admin hecked up."
+	fi
+}
+
+function pronouns_command {
+	local user="$1"
+	local args="$2"
+	local pronouns="${IRC_DIR}/users/${user}/pronouns"
+
+	if test "$(first "$args")" = "masc"; then
+		printf "he\nhim\nhis\nMr.\nsir\n" > "$pronouns"
+		pm "${user}" "Masc it is then, nerd."
+	elif test "$(first "$args")" = "femme"; then
+		printf "she\nher\nher\nMs.\nma'am\n" > "$pronouns"
+		pm "${user}" "Alright, your pronouns are femme now. Nerd."
+	else
+		printf "they\nthem\ntheir\nMx.\nmir\n" > "$pronouns"
+		pm "${user}" "Alright, your pronouns are they as heck."
+	fi
+}
+
+
+# ――――――――――――――――――――――――――――――――――――――
+# PRONOUNS
+# ――――――――――――――――――――――――――――――――――――――
+function they {
+	local user="$1"
+	head -1 "${IRC_DIR}/users/${user}/pronouns"
+}
+function They { cap_first "$(they "$1")"; }
+
+function them {
+	local user="$1"
+	head -2 "${IRC_DIR}/users/${user}/pronouns" | tail -1
+}
+function Them { cap_first "$(them "$1")"; }
+
+function their {
+	local user="$1"
+	head -3 "${IRC_DIR}/users/${user}/pronouns" | tail -1
+}
+function Their { cap_first "$(their "$1")"; }
+
+function Mx {
+	local user="$1"
+	head -4 "${IRC_DIR}/users/${user}/pronouns" | tail -1
+}
+
+function mir {
+	local user="$1"
+	tail -1 "${IRC_DIR}/users/${user}/pronouns"
+}
+function Mir { cap_first "$(mir "$1")"; }
+
+
+# ――――――――――――――――――――――――――――――――――――――
+# UTIL FUNCTIONS
+# ――――――――――――――――――――――――――――――――――――――
+# Gets first word of string
+function first {
+	local string="$1"
+	local delimeter="$2"
+	if test -z "$delimeter"; then delimeter=' '; fi
+	echo "$string" \
+	| awk -F "$delimeter" '{ print $1 }'
+}
+
+# Removes first word from string
+function chop_first {
+	local word="$1"
+	local delimeter="$2"
+	if test -z "$delimeter"; then delimeter=' '; fi
+	echo "$word" \
+	| awk -F "$delimeter" '{ $1=""; print $0 }' \
+	| sed 's%^ %%'
+}
+
+# Capitalize the first character of given string
+function cap_first {
+	local string="$1"
+	local first="$(echo "$string" | cut -c1 | tr '[a-z]' '[A-Z]')"
+	local second="$(echo "$string" | cut -c2-)"
+	echo "${first}${second}"
+}
+
+# Save an object before a write operation, justtt in case
+function graveyard_store {
+	local file="$1"
+	local graveyard="${IRC_DIR}/graveyard/$(date +%Y-%m-%d)"
+	mkdir -p "$graveyard"
+	cp -r "$file" "$garveyard"
+}
+
+
+# ――――――――――――――――――――――――――――――――――――――
+# PARSER HELPER FUNCTIONS
+# ――――――――――――――――――――――――――――――――――――――
+function is_membership_line {
+	grep '....-..-.. ..:.. -!-' > /dev/null
+}
+
+# Parse a message line
+function message_user {
+	echo "$1" \
+	| sed 's%....-..-.. ..:.. <%%' \
+	| awk -F '>' '{ print $1 }'
+}
+
+function message_text {
+	echo "$1" \
+	| sed 's%....-..-.. ..:.. <%%' \
+	| awk -F '>' '{ $1=""; print $0 }' \
+	| sed 's%^  %%' \
+	| tr -d '\001'
+}
+
+# Parse a membership update line (-!-)
+function membership_user {
+	echo "$1" \
+	| sed 's%....-..-.. ..:.. -!- %%' \
+	| sed 's%(.*).*%%'
+}
+
+function membership_type {
+	echo "$1" \
+	| sed 's%....-..-.. ..:.. -!- %%' \
+	| sed 's%.*(.*) has %%' \
+	| sed 's% .*%%'
+}
+
+# ――――――――――――――――――――――――――――――――――――――
+# PARSING
+# ――――――――――――――――――――――――――――――――――――――
+function command_parse {
+	local user="$1"
+	local command="$2"
+	local args="$3"
+
+	if test "$command" = "ACTION"; then
+		command_parse "$user" "$(echo "$args" | awk '{print $1}')" \
+			"$(chop_first "$args")"
+	elif test "$command" = "${NICK}:"; then
+		bot_command_parse "$user" "$(first "$args")" \
+			"$(chop_first "$args")"
+	elif echo "examines inspects x looks" | grep "$command">/dev/null ; then
+		examine_command "$user" "$args"
+	elif echo "takes grabs nabs" | grep "$command">/dev/null ; then
+		take_command "$user" "$args"
+	elif echo "drops removes places" | grep "$command">/dev/null ; then
+		drop_command "$user" "$args"
+	elif test "$command" = "rummages"; then
+		rummage_command "$user" "$args"
+	elif test "$command" = "creates"; then
+		creates_command "$user" "$args"
+	elif test "$command" = "aliases"; then
+		aliases_command "$user" "$args"
+	elif test "$command" = "renames"; then
+		renames_command "$user" "$args"
+	elif test "$command" = "describes"; then
+		describes_command "$user" "$args"
+	elif test "$command" = "permits"; then
+		permits_command "$user" "$args"
+	elif test "$command" = "gifts"; then
+		gifts_command "$user" "$args"
+	elif test "$command" = "hinges"; then
+		hinges_command "$user" "$args"
+	elif test "$command" = "opens"; then
+		opens_command "$user" "$args"
+	elif test "$command" = "closes"; then
+		closes_command "$user" "$args"
+	elif test "$command" = "writes"; then
+		writes_command "$user" "$args"
+	elif test "$command" = "reads"; then
+		reads_command "$user" "$args"
+	fi
+}
+
+function bot_command_parse {
+	local user="$1"
+	local command="$2"
+	local args="$3"
+
+	if test "$command" = "help"; then
+		help_command "$user" "$args"
+	elif test "$command" = "pronouns"; then
+		pronouns_command "$user" "$args"
+	fi
+}
+
+function message_parse {
+	local line="$1"
+	local text="$(message_text "$line")"
+	local command="$(echo "$text" | awk '{ print $1 }')"
+	local args="$(chop_first "$text")"
+
+	command_parse "$(message_user "$line")" "$command" "$args"
+}
+
+function membership_parse {
+	local line="$1"
+	if test "$(membership_type "$line")" = "joined"; then
+#		send_description "$(membership_user "$line")" "$IRC_DIR"
+		echo "Member entered."
+	fi
+}
+
+function ensure_user {
+	local user="$1"
+	local userdir="${IRC_DIR}/users/${user}"
+	local descfile="${userdir}/description"
+	local pronounfile="${userdir}/pronouns"
+	mkdir -p "${userdir}/items"
+
+	if test ! -f "$pronounfile"; then
+		printf "they\nthem\ntheir\nMx.\nmir\n" > "$pronounfile"
+	fi
+	if test ! -f "${descfile}"; then
+		echo "$user looks like a fairly regular person." \
+		>> "$descfile"
+		echo "$(They "$user") look at you, tilting their head a bit." \
+		>> "$descfile"
+	fi
+}
+
+function parse_line {
+	local line="$1"
+	if echo "$line" | is_membership_line; then
+		ensure_user "$(membership_user "$line")"
+		mkdir -p "${IRC_DIR}/users/$(membership_user "$line")/items"
+		membership_parse "$line"
+	else
+		ensure_user "$(message_user "$line")"
+		mkdir -p "${IRC_DIR}/users/$(message_user "$line")/items"
+		message_parse "$line"
+	fi
+}
+
+
+# ――――――――――――――――――――――――――――――――――――――
+# INVOCATION
+# ――――――――――――――――――――――――――――――――――――――
+# The irc directory for a given room, as created by ii (suckless).
+# e.g., irc/irc.freenode.org/#miid/
+IRC_DIR="$1"
+NICK="$2"
+
+if test -z "$NICK"; then
+	echo "usage: $0 II_ROOM_DIR NICK"
+#	exit 2;
+else
+	parse_line "$(tail -1 "${IRC_DIR}/out")" "$NICK"
+fi

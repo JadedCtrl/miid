@@ -1,0 +1,44 @@
+I'm a MUSH/MUD/IF-esque bot, and you're a fleshbag. Nice to meetcha.
+.
+When I'm in a room, it's a literal room. You can look around, grab things,
+use things, basically what you'd expect. You leave the room with /leave.
+Please, try it. :-)
+.
+COMMANDS
+――――――――――――――――――――――――――――――――――――――――
+To use a command, type "/me COMMAND ARGS" or "ACTION COMMAND ARGS".
+.
+- examines/inspects/looks/x OBJECT
+- examines/inspects/looks/x [at the room] [around] [here]
+- takes/grabs/nabs OBJECT
+- drops/removes/places OBJECT
+- rummages [through sack]   :   List all items in your inventory
+- rummages around           :   List all items in the room
+.
+BUILD COMMANDS
+――――――――――――――――――――――――――――――――――――――――
+You can create or edit objects, if you like! You can even program objects to
+have something happen when "used", though for that you'll have to talk to
+my admin.
+.
+- creates name              :   Creates an object and puts it in your inventory.
+- aliases OBJECT as name    :   Adds an alias to the object's namelist.
+- renames OBJECT as name    :   Renames object, and removes all old aliases.
+- describes OBJECT as desc  :   Change it's description. Escape chars (\n) good.
+- hinges OBJECT             :   Makes object openable, like a book.
+- writes in/on OBJECT, text :   Write on or in a given object.
+- reads [in/on] OBJECT      :   Reads what is on/in an object.
+.
+- disowns OBJECT            :   Removes ownership, making the object communal
+- permits USER with OBJECT  :   Allow another user to edit your object.
+- gifts OBJECT to USER      :   Gift an object (and it's sole ownership)
+.
+BOT COMMANDS
+――――――――――――――――――――――――――――――――――――――――
+There are also some some commands that you issue to me as a message,
+e.g., "narrator: help".
+.
+- pronouns [femme/masc]
+- help
+.
+- END OF TRANSMISSION -
