@@ -576,6 +576,12 @@ function help_command {
 	fi
 }
 
+function sauce_command {
+	local user="$1"
+	msg "$user, you can find my secret sauce at https://github.com/JadedCtrl/miid."
+	msg "… just, be careful, OK?"
+}
+
 function pronouns_command {
 	local user="$1"
 	local args="$2"
@@ -756,6 +762,8 @@ function bot_command_parse {
 
 	if test "$command" = "help"; then
 		help_command "$user" "$args"
+	elif test "$command" = "sauce"; then
+		sauce_command "$user" "$args"
 	elif test "$command" = "pronouns"; then
 		pronouns_command "$user" "$args"
 	fi
