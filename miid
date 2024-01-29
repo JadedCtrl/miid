@@ -1,7 +1,7 @@
 #!/bin/sh
 #―――――――――――――――――――――――――――――――――――――――
 # name: miid, Mushy II Demon
-# main: jadedctrl<@teknik.io>
+# main: jadedctrl<@posteo.at>
 # date: 2021
 #―――――――――――――――――――――――――――――――――――――――
 
@@ -578,7 +578,7 @@ function help_command {
 
 function sauce_command {
 	local user="$1"
-	msg "$user, you can find my secret sauce at https://github.com/JadedCtrl/miid."
+	msg "$user, you can find my secret sauce at https://hak.xwx.moe/jadedctrl/miid."
 	msg "… just, be careful, OK?"
 }
 
